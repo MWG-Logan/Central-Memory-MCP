@@ -1,183 +1,158 @@
-# API Reference (MCP Tools) – .NET Implementation
+# API Reference (Current Implemented MCP Tools)
 
-## Overview
-HTTP-triggered Azure Functions expose MCP tooling for knowledge graph operations. All endpoints require `workspaceName` for isolation. Responses are optimized for LLM consumption (concise, structured, minimal nesting).
+Alpha implementation exposes four MCP tools plus health endpoints.
 
-## Entity Operations
-### create_entities
-Upserts one or more entities (existing entities append new observations; metadata merged by key).
-Parameters:
-- workspaceName (string)
-- entities (array|object) – single entity or array
-Entity shape:
+## Tools Summary
+
+- read_graph: Returns all entities and relations for a workspace.
+- upsert_entity: Creates or updates an entity by name within a workspace.
+- upsert_relation: Creates or updates a relation between two existing entities.
+- get_entity_relations: Lists all relations originating from a given entity.
+
+(Health endpoints `/api/health`, `/api/ready` are standard HTTP, not MCP tools.)
+
+## Common Parameter
+
+- workspaceName (string, required) â€“ partition key for isolation.
+
+## Entity Model Response Shape
+
 ```json
 {
+  "workspaceName": "demo",
   "name": "Alice",
   "entityType": "Person",
   "observations": ["Software engineer"],
-  "metadata": {"dept": "Engineering"}
+  "metadata": "{\"dept\":\"Engineering\"}",
+  "id": "<guid>"
 }
 ```
 
-### add_observation
-Append a single observation to an entity (auto-creates entity if missing).
-Parameters:
-- workspaceName
-- entityName
-- observation (string)
-- entityType (optional if creating implicitly)
+Observations persisted internally joined by "||" delimiter; returned as list.
 
-### update_entity
-Replace metadata keys and optionally append observations.
-Parameters:
-- workspaceName
-- entityName
-- observations (array, optional)
-- metadata (object, optional)
+## read_graph
 
-### delete_entity
-Removes entity and its relations (idempotent).
+Returns all entities and relations.
 Parameters:
-- workspaceName
-- entityName
 
-### search_entities
-Fuzzy search by partial name or filter by entityType.
-Parameters:
 - workspaceName
-- name (optional)
-- entityType (optional)
 
-## Relation Operations
-### create_relations
-Upserts one or more relations (auto-creates missing entities).
-Parameters:
-- workspaceName
-- relations (array|object) – relation shape below
-Relation shape:
-```json
-{
-  "from": "Alice",
-  "to": "Central Memory Server",
-  "relationType": "worksOn",
-  "metadata": {"since": "2025"}
-}
-```
-
-### search_relations
-Filter relations by from, to, relationType.
-Parameters:
-- workspaceName
-- from (optional)
-- to (optional)
-- relationType (optional)
-
-### search_relations_by_user
-Filter relations with metadata user context.
-Parameters:
-- workspaceName
-- userId (optional)
-- relationType (optional)
-
-## Graph Operations
-### read_graph
-Returns all entities + relations for workspace.
-Parameters:
-- workspaceName
 Response:
+
 ```json
 {
-  "entities": [...],
-  "relations": [...]
+  "workspaceName": "demo",
+  "entities": [ {"name":"Alice"}, {"name":"ProjectX"} ],
+  "relations": [ {"relationType":"works_on"} ]
 }
 ```
 
-### clear_memory
-Deletes all entities and relations for workspace.
-Parameters:
-- workspaceName
+## upsert_entity
 
-## Statistics & Temporal
-### get_stats
-Aggregated counts and distribution.
-Response example:
+Create or update an entity (matched by name within workspace).
+Request body shape:
+
 ```json
 {
-  "totalEntities": 5,
-  "totalRelations": 3,
-  "entityTypes": {"Person":3,"Project":2},
-  "relationTypes": {"worksOn":2},
-  "workspaceName": "my-project"
+  "workspaceName": "demo",
+  "name": "Alice",
+  "entityType": "Person",
+  "observations": ["Software engineer"],
+  "metadata": "{\"dept\":\"Engineering\"}"
 }
 ```
 
-### get_user_stats
-User-specific aggregated view (if user metadata tracked).
-Parameters:
-- workspaceName
-- userId (optional)
+Response:
 
-### get_temporal_events
-Return entities & relations created/updated in time range.
-Parameters:
-- workspaceName
-- startTime (ISO 8601)
-- endTime (ISO 8601)
-- entityName (optional)
-- relationType (optional)
+```json
+{ "success": true, "id": "<guid>", "workspace": "demo", "name": "Alice" }
+```
 
-## Advanced
-### detect_duplicate_entities
-Heuristic similarity across names & observations.
-Parameters:
-- workspaceName
-- threshold (float 0-1, default 0.8)
+Failure example:
 
-### merge_entities
-Merge sources into target combining observations & metadata.
-Parameters:
-- workspaceName
-- targetEntityName
-- sourceEntityNames (array)
-- mergeStrategy ("combine" | "replace"; default combine)
+```json
+{ "success": false, "message": "Invalid entity payload. Require workspaceName, name and entityType." }
+```
 
-### execute_batch_operations
-Execute mixed entity/relation operations.
-Parameters:
-- workspaceName
-- operations (array)
-Operation item:
+## upsert_relation
+
+Creates or updates a relation between two entities.
+Parameters body:
+
 ```json
 {
-  "type": "create_entity|create_relation|delete_entity",
-  "data": { /* shape depends on type */ }
+  "workspaceName": "demo",
+  "fromEntityId": "<guid>",
+  "toEntityId": "<guid>",
+  "relationType": "works_with",
+  "metadata": "{\"since\":\"2025\"}"
 }
 ```
 
-## Error Model
-Errors return:
+Alternatively supply legacy names:
+
 ```json
 {
-  "error": "ValidationError",
-  "message": "Entity name is required",
-  "details": {"field":"name"}
+  "workspaceName": "demo",
+  "from": "Alice",
+  "to": "ProjectX",
+  "relationType": "works_on"
 }
 ```
-Common types: ValidationError, NotFoundError, ConflictError, StorageError.
 
-## Conventions
-- All string inputs trimmed; empty -> validation error.
-- Observations appended; duplicates allowed (LLM may reassert facts).
-- Metadata merged shallow (key overwrite).
-- Idempotent deletes & upserts.
+Response:
 
-## Limits & Performance
-- Batch size tuned to Azure Table 100 entity limit per partition.
-- Typical latency < 100ms for single operations (local).
-- Large graph reads may paginate in future roadmap.
+```json
+{ "success": true, "relationId": "<guid>", "workspace": "demo", "fromEntityId": "<guid>", "toEntityId": "<guid>", "relationType": "works_on" }
+```
+
+Errors:
+
+- Source entity 'X' not found.
+- Target entity 'Y' not found.
+- Invalid relation payload. Provide fromEntityId/toEntityId or from/to names that exist.
+
+## get_entity_relations
+
+List all relations from a given entity.
+Parameters:
+
+- workspaceName (string)
+- entityId (GUID preferred) OR entityName (string)
+
+Response:
+
+```json
+{
+  "success": true,
+  "workspaceName": "demo",
+  "entityId": "<guid>",
+  "relations": [ {"relationType": "works_on", "toEntityId": "<guid>"} ]
+}
+```
+
+Failure:
+
+```json
+{ "success": false, "message": "Entity 'Alice' not found in workspace 'demo'." }
+```
+
+## Error Format
+
+Errors returned uniformly:
+
+```json
+{ "success": false, "message": "<reason>" }
+```
+
+## Not Implemented (Roadmap)
+
+search_entities, search_relations, stats, temporal events, batch operations, merge/detect duplicates, user-specific metadata features.
 
 ## Authentication
-Current implementation assumes trusted environment; add Azure AD / API key layer for production if exposed publicly.
+
+Currently none (trusted dev environment). Add Azure AD / API key layer before external exposure.
 
 ## Versioning
-Tool set considered v1; additive changes will extend without breaking existing shapes.
+
+Tool set considered v0 (alpha). Additions will be non-breaking by extending responses.

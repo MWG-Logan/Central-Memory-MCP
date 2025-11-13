@@ -1,91 +1,84 @@
 # Architecture Guide (.NET Implementation)
 
 ## Overview
-The Central Memory MCP Server is a serverless Azure Functions (.NET 10 isolated worker) application exposing Model Context Protocol (MCP) memory & knowledge graph operations. It stores entities, relations, observations, and statistics in Azure Table Storage with strong workspace isolation.
+
+Serverless Azure Functions (.NET 10 isolated) implementing a minimal MCP memory graph (alpha). Current scope: entities + relations with basic CRUD and graph read. Workspace isolation via `WorkspaceName` partition key.
 
 ## High-Level Diagram
-```text
-┌──────────────┐   HTTP / MCP Tools   ┌─────────────────────┐   Table API   ┌────────────────────┐
-│ AI Assistant │  ─────────────────▶  │ Azure Functions (.NET)│ ───────────▶ │ Azure Table Storage │
-│ (Copilot MCP)│  ◀─────────────────  │ Graph / Health funcs │ ◀─────────── │  (Azurite local)    │
-└──────────────┘                      └─────────────────────┘              └────────────────────┘
+
+```mermaid
+flowchart LR
+    C[Client / MCP Tool] -->|read_graph / upsert_entity / upsert_relation / get_entity_relations| F[GraphFunctions]
+    F --> S[KnowledgeGraphService]
+    F --> R[RelationService]
+    S --> T1[entities Table]
+    R --> T2[relations Table]
 ```
 
-## Core Components
-1. Functions Layer (`GraphFunctions`, `HealthFunctions`) – HTTP triggers for MCP tool endpoints and health/readiness checks.
-2. Domain Service (`KnowledgeGraphService`) – Orchestrates entity/relation/observation/stat operations.
-3. Storage Abstraction (`TableStorageService`) – Encapsulates Azure Table operations (upsert/search/delete/batch) using `workspaceName` as partition key.
-4. Models (`GraphModels.cs`) – DTOs & contracts for graph entities, relations, requests, responses.
-5. DI & Host Bootstrap (`Program.cs`, `ServiceRegistration.cs`) – Configures services, logging, configuration binding.
+## Implemented Components
+
+1. GraphFunctions – MCP tool bindings (4 tools implemented).
+2. HealthFunctions – `/api/health`, `/api/ready`.
+3. KnowledgeGraphService – entity upsert, single entity lookup, full workspace read.
+4. RelationService – relation upsert, relations-from-entity lookup, workspace relations list.
+5. TableStorageService – ensures existence of tables and returns clients.
+6. Models – `EntityModel`, `RelationModel`, `WorkspaceModel` (workspace not yet used in tool surface).
 
 ## Data Model
-```csharp
-public class EntityDto { 
-    public string workspaceName { get; set; } 
-    public string Name { get; set; } 
-    public string EntityType { get; set; } 
-    public List<string> Observations { get; set; } = new(); 
-    public Dictionary<string, string>? Metadata { get; set; } 
-}
 
-public class RelationDto { 
-    public string workspaceName { get; set; } 
-    public string From { get; set; } 
-    public string To { get; set; } 
-    public string RelationType { get; set; } 
-    public Dictionary<string, string>? Metadata { get; set; } 
-}
+```csharp
+public record EntityModel(string WorkspaceName, string Name, string EntityType, List<string> Observations, string? Metadata)
+// PartitionKey = WorkspaceName, RowKey = Guid (Id)
+// Observations persisted joined by "||" delimiter
+
+public record RelationModel(string WorkspaceName, Guid FromEntityId, Guid ToEntityId, string RelationType, string? Metadata)
+// PartitionKey = WorkspaceName, RowKey = Guid (Id)
 ```
 
-## Workspace Isolation
-- PartitionKey: `workspaceName`
-- RowKey (Entities): sanitized entity name
-- RowKey (Relations): composite key (from|relationType|to)
-- Benefit: Natural multi-tenant separation and efficient partition scans.
+## Storage
 
-## Operations Flow
-1. Request hits HTTP trigger (mapped to MCP tool).
-2. Input validated (workspaceName required; entity/relation fields sanitized).
-3. Domain service invokes storage abstraction for CRUD/batch operations.
-4. Storage layer executes Azure Table calls and transforms back to DTOs.
-5. Response returned with minimal shape suited for LLM consumption.
+- Tables: entities, relations, (workspaces reserved)
+- Partition strategy: simple partition per workspace for both tables.
+- Row keys: GUID for stability (names may contain special chars).
 
-## Batch & Performance
-- Batching applied for multi-entity or multi-relation upserts respecting Azure Table batch limits per partition.
-- Reuse of `TableClient` via DI reduces connection churn.
-- Observations appended; large lists may be future candidates for archival (roadmap).
+## Operations Flow (Entity Upsert)
+
+```mermaid
+sequenceDiagram
+    participant Tool as MCP Tool
+    participant Func as GraphFunctions.UpsertEntity
+    participant Svc as KnowledgeGraphService
+    participant Tbl as Azure Table (entities)
+    Tool->>Func: UpsertEntityRequest
+    Func->>Svc: UpsertEntityAsync(model)
+    Svc->>Svc: Lookup existing by name
+    Svc->>Tbl: UpsertEntity
+    Tbl-->>Svc: Success
+    Svc-->>Func: EntityModel (Id preserved/reused)
+    Func-->>Tool: { success, id, name }
+```
 
 ## Error Handling
-- Validation errors: 400 with clear message & example.
-- Storage errors: logged, surfaced as 500 minimal error object.
-- NotFound semantics: delete operations idempotent.
+
+- Request validation (required fields checked). Returns `{ success=false, message="..." }`.
+- Relation upsert fails if source/target not resolvable.
+- Missing entity in get_entity_relations returns friendly message.
 
 ## Logging
-- Scoped logging per request/workspace for correlation.
-- Structured fields: workspaceName, operation, counts, duration.
 
-## Health & Readiness
-- `/api/health`: basic process & configuration validation.
-- `/api/ready`: storage dependency probe (table client reachable).
+(Planned) Structured logging with workspace scope; currently minimal.
 
-## Security & Configuration
-- Local dev: `UseDevelopmentStorage=true` (Azurite).
-- Production: Use managed identity or secure connection string (Key Vault retrieval recommended).
-- Input sanitation prevents malformed Table keys.
+## Security
 
-## Future Enhancements
-- Vector similarity enrichment layer.
-- Blob archival for oversized observation histories.
-- Temporal event indexing improvements.
-- Advanced duplicate detection heuristics.
+Development assumes trusted environment; add auth (Azure AD) before external exposure.
 
-## Monitoring
-- Integrate Application Insights via instrumentation key / connection string.
-- Track: request latency, batch sizes, error counts.
+## Roadmap
 
-## MCP Tool Surface Mapping
-Each MCP tool corresponds to a public method in `KnowledgeGraphService` invoked by `GraphFunctions` (e.g. create_entities -> CreateEntitiesAsync).
+- Additional tools: search, stats, batch operations.
+- Metadata merge & observation limit controls.
+- Duplicate detection & merge.
+- Vector similarity index.
 
 ## Deployment
-- Build & publish via GitHub Actions (CI) using `dotnet publish` output.
-- Azure Functions consumption or premium plan recommended for scale.
+
+Publish via `dotnet publish` and Azure Functions tooling. Health endpoints for readiness probes.
