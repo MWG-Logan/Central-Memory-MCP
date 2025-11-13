@@ -1,184 +1,91 @@
-# Architecture Guide
+# Architecture Guide (.NET Implementation)
 
 ## Overview
+The Central Memory MCP Server is a serverless Azure Functions (.NET 10 isolated worker) application exposing Model Context Protocol (MCP) memory & knowledge graph operations. It stores entities, relations, observations, and statistics in Azure Table Storage with strong workspace isolation.
 
-The Central Memory MCP Server is built as a serverless Azure Functions application that provides persistent knowledge graph storage for AI assistants through the Model Context Protocol (MCP).
-
-## System Architecture
-
+## High-Level Diagram
 ```text
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   VS Code       │    │  Azure Functions │    │  Azure Table    │
-│   Copilot       │◄──►│   MCP Server     │◄──►│   Storage       │
-│   (#memory-test)│    │                 │    │  (Azurite local)│
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+┌──────────────┐   HTTP / MCP Tools   ┌─────────────────────┐   Table API   ┌────────────────────┐
+│ AI Assistant │  ─────────────────▶  │ Azure Functions (.NET)│ ───────────▶ │ Azure Table Storage │
+│ (Copilot MCP)│  ◀─────────────────  │ Graph / Health funcs │ ◀─────────── │  (Azurite local)    │
+└──────────────┘                      └─────────────────────┘              └────────────────────┘
 ```
 
 ## Core Components
+1. Functions Layer (`GraphFunctions`, `HealthFunctions`) – HTTP triggers for MCP tool endpoints and health/readiness checks.
+2. Domain Service (`KnowledgeGraphService`) – Orchestrates entity/relation/observation/stat operations.
+3. Storage Abstraction (`TableStorageService`) – Encapsulates Azure Table operations (upsert/search/delete/batch) using `workspaceName` as partition key.
+4. Models (`GraphModels.cs`) – DTOs & contracts for graph entities, relations, requests, responses.
+5. DI & Host Bootstrap (`Program.cs`, `ServiceRegistration.cs`) – Configures services, logging, configuration binding.
 
-### 1. MCP Integration Layer
-
-- **Location**: `src/functions/mcpTools.ts`
-- **Purpose**: Handles MCP protocol communication
-- **Features**:
-  - 16 MCP tools for knowledge graph operations
-  - Workspace-aware request routing
-  - Error handling and validation
-
-### 2. Storage Service
-
-- **Location**: `src/services/storageService.ts`
-- **Purpose**: Unified storage abstraction
-- **Features**:
-  - Azure Table Storage integration
-  - Azurite development storage support
-  - Workspace isolation
-  - Batch operations for performance
-
-### 3. Domain Services
-
-- **Entities Service**: `src/services/entities.ts`
-- **Relations Service**: `src/services/relations.ts`
-- **Stats Service**: `src/services/stats.ts`
-- **Purpose**: Business logic for knowledge graph operations
-
-### 4. Type System
-
-- **Location**: `src/types/`
-- **Purpose**: TypeScript definitions for all domain objects
-- **Structure**:
-  - `core.ts` - Entity and Relation definitions
-  - `storage.ts` - Storage and workspace types
-  - `operations.ts` - Operation and batch types
-  - `stats.ts` - Statistics and metrics types
-
-## Design Patterns
-
-### 1. Workspace Isolation
-
-Each VS Code workspace gets its own partition in Azure Table Storage:
-
-- **Partition Key**: `workspaceId`
-- **Row Key**: Entity name or relation identifier
-- **Benefits**: Complete data isolation, multi-tenant support
-
-### 2. Entity-Relation Model
-
-```typescript
-interface Entity {
-  name: string;
-  entityType: string;
-  observations: string[];
-  metadata?: Record<string, any>;
+## Data Model
+```csharp
+public class EntityDto { 
+    public string workspaceName { get; set; } 
+    public string Name { get; set; } 
+    public string EntityType { get; set; } 
+    public List<string> Observations { get; set; } = new(); 
+    public Dictionary<string, string>? Metadata { get; set; } 
 }
 
-interface Relation {
-  from: string;
-  to: string;
-  relationType: string;
-  strength?: number;
-  metadata?: Record<string, any>;
+public class RelationDto { 
+    public string workspaceName { get; set; } 
+    public string From { get; set; } 
+    public string To { get; set; } 
+    public string RelationType { get; set; } 
+    public Dictionary<string, string>? Metadata { get; set; } 
 }
 ```
 
-### 3. Batch Processing
+## Workspace Isolation
+- PartitionKey: `workspaceName`
+- RowKey (Entities): sanitized entity name
+- RowKey (Relations): composite key (from|relationType|to)
+- Benefit: Natural multi-tenant separation and efficient partition scans.
 
-- Operations are automatically batched for performance
-- Azure Table Storage 100-item batch limit respected
-- Fallback to individual operations when needed
+## Operations Flow
+1. Request hits HTTP trigger (mapped to MCP tool).
+2. Input validated (workspaceName required; entity/relation fields sanitized).
+3. Domain service invokes storage abstraction for CRUD/batch operations.
+4. Storage layer executes Azure Table calls and transforms back to DTOs.
+5. Response returned with minimal shape suited for LLM consumption.
 
-### 4. Storage Abstraction
-
-```typescript
-class StorageService {
-  // Factory pattern for workspace-specific instances
-  static async createForWorkspace(workspaceId: string): Promise<StorageService>
-  
-  // Unified operations for all storage needs
-  async upsertEntities(entities: Entity[]): Promise<void>
-  async searchEntities(query: SearchQuery): Promise<Entity[]>
-}
-```
-
-## Data Flow
-
-### 1. Request Processing
-
-1. VS Code sends MCP request to `/runtime/webhooks/mcp/sse`
-2. Azure Functions runtime routes to appropriate MCP tool
-3. Tool validates request and extracts workspace context
-4. Storage service performs operation with workspace isolation
-
-### 2. Storage Operations
-
-1. Entity/relation validation
-2. Workspace-specific storage service creation
-3. Azure Table Storage operations (with Azurite locally)
-4. Response transformation and return
-
-## Performance Considerations
-
-### 1. Storage Optimization
-
-- **Partition Strategy**: Workspace-based partitioning
-- **Batch Operations**: Automatic batching for bulk operations
-- **Connection Pooling**: Reused TableClient instances
-
-### 2. Memory Management
-
-- **Stateless Functions**: Each request is independent
-- **Efficient Serialization**: JSON for complex objects
-- **Streaming**: Large result sets handled efficiently
-
-## Security Model
-
-### 1. Development
-
-- **Azurite**: Local storage emulator
-- **Connection String**: Development storage account
-- **Isolation**: Process-level isolation
-
-### 2. Production
-
-- **Managed Identity**: Azure AD authentication
-- **Network Security**: Private endpoints support
-- **Workspace Isolation**: Tenant-level data separation
+## Batch & Performance
+- Batching applied for multi-entity or multi-relation upserts respecting Azure Table batch limits per partition.
+- Reuse of `TableClient` via DI reduces connection churn.
+- Observations appended; large lists may be future candidates for archival (roadmap).
 
 ## Error Handling
+- Validation errors: 400 with clear message & example.
+- Storage errors: logged, surfaced as 500 minimal error object.
+- NotFound semantics: delete operations idempotent.
 
-### 1. Validation Errors
+## Logging
+- Scoped logging per request/workspace for correlation.
+- Structured fields: workspaceName, operation, counts, duration.
 
-- Entity structure validation
-- Required field checking
-- Type safety enforcement
+## Health & Readiness
+- `/api/health`: basic process & configuration validation.
+- `/api/ready`: storage dependency probe (table client reachable).
 
-### 2. Storage Errors
+## Security & Configuration
+- Local dev: `UseDevelopmentStorage=true` (Azurite).
+- Production: Use managed identity or secure connection string (Key Vault retrieval recommended).
+- Input sanitation prevents malformed Table keys.
 
-- Connection failure handling
-- Retry logic for transient failures
-- Graceful degradation
+## Future Enhancements
+- Vector similarity enrichment layer.
+- Blob archival for oversized observation histories.
+- Temporal event indexing improvements.
+- Advanced duplicate detection heuristics.
 
-### 3. MCP Protocol Errors
+## Monitoring
+- Integrate Application Insights via instrumentation key / connection string.
+- Track: request latency, batch sizes, error counts.
 
-- Proper error response formatting
-- Detailed error messages for debugging
-- Request/response logging
+## MCP Tool Surface Mapping
+Each MCP tool corresponds to a public method in `KnowledgeGraphService` invoked by `GraphFunctions` (e.g. create_entities -> CreateEntitiesAsync).
 
-## Monitoring and Observability
-
-### 1. Health Endpoints
-
-- `/api/health` - Basic health check
-- `/api/ready` - Readiness probe for containers
-
-### 2. Logging
-
-- Structured logging with correlation IDs
-- Storage operation metrics
-- Error tracking and alerting
-
-### 3. Performance Metrics
-
-- Request latency tracking
-- Storage operation timing
-- Batch operation efficiency
+## Deployment
+- Build & publish via GitHub Actions (CI) using `dotnet publish` output.
+- Azure Functions consumption or premium plan recommended for scale.

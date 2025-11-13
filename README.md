@@ -1,129 +1,117 @@
-# Central Memory MCP Server
+# Central Memory MCP Server (.NET 10 Azure Functions)
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/MWGMorningwood/Central-Memory-MCP)](https://archestra.ai/mcp-catalog/mwgmorningwood__central-memory-mcp)
 
-Model Context Protocol (MCP) memory server built with Azure Functions and TypeScript, providing persistent knowledge graph storage for AI assistants in VS Code.  
-Inspired by and forked from [`@modelcontextprotocol/server-memory`](https://github.com/modelcontextprotocol/servers/tree/main/src/memory)
+Model Context Protocol (MCP) compliant memory & knowledge graph server implemented in .NET 10 (Azure Functions isolated worker). Provides durable project memory (entities, relations, observations, statistics) for AI assistants (e.g. GitHub Copilot) with workspace isolation and simple HTTP tool endpoints.
+
+## 🧠 Core Concepts
+- Workspace Isolation via `workspaceName` partition key
+- Entities: name, type, observations (append-only facts), metadata
+- Relations: directed edges (`from` -> `to`, typed, optional user metadata)
+- Observations: time-stamped appended facts enriching entities
+- Graph Stats: counts, temporal events, duplicate detection helpers
+
+## 🏗 Technology Stack
+- .NET 10 Azure Functions (isolated)
+- Azure Table Storage (Azurite for local dev)
+- Dependency Injection (generic host builder)
+- Structured Logging (ILogger scopes per workspace)
+- Simple DTO surface for MCP tools
 
 ## 🚀 Quick Start
-
 ```bash
-npm install
-func start
-```
+# Restore & build
+dotnet restore
+dotnet build
 
-### VS Code Integration
+# Run locally (Azure Functions Core Tools v4 required)
+func start --port 7071
 
-1. **Install recommended extensions** from `.vscode/extensions.json`
-2. **MCP configuration** is ready in `.vscode/mcp.json`
-3. **Use `#memory-test` tools** in VS Code Copilot chat
-
-> **Note**: All MCP tools now use object parameters instead of JSON strings for better type safety and ease of use.
-
-### Test the Server
-
-```bash
-# Health check
+# Health
 curl http://localhost:7071/api/health
-
-# Use in VS Code Copilot with object parameters:
-# #memory-test_create_entities
-# #memory-test_read_graph
-# #memory-test_search_entities
+curl http://localhost:7071/api/ready
+```
+Local storage configuration:
+```
+AzureWebJobsStorage=UseDevelopmentStorage=true
+```
+Production example:
+```
+AzureWebJobsStorage=DefaultEndpointsProtocol=https;AccountName=<name>;AccountKey=<key>;EndpointSuffix=core.windows.net
 ```
 
-### Example Usage in VS Code Copilot
+## 🔧 MCP Tool Endpoints
+Core operations exposed as HTTP functions (mapped to MCP tools):
+- read_graph
+- create_entities
+- create_relations
+- search_entities / search_relations
+- add_observation
+- update_entity
+- delete_entity
+- get_stats
+- clear_memory
+- merge_entities
+- detect_duplicate_entities
+- get_temporal_events
+- execute_batch_operations
+- get_user_stats
+- search_relations_by_user
 
-**Recommended workflow for best results:**
+### Recommended Workflow
+1. read_graph (baseline)  
+2. search_entities (prevent duplicates)  
+3. create_entities (upsert)  
+4. create_relations (connect graph)  
+5. add_observation (incremental enrichment)
 
+Edge cases: missing entities auto-created during relation / observation operations.
+
+## 📁 Directory Layout
 ```text
-1. First, check existing data:
-#memory-test_read_graph workspaceId="my-project"
-
-2. Search for existing entities:
-#memory-test_search_entities workspaceId="my-project" name="Alice"
-
-3. Create entities (auto-updates existing ones):
-#memory-test_create_entities workspaceId="my-project" entities={"name": "Alice", "entityType": "Person", "observations": ["Software engineer"]}
-
-4. Create relationships (auto-creates missing entities):
-#memory-test_create_relations workspaceId="my-project" relations={"from": "Alice", "to": "React Project", "relationType": "worksOn"}
-
-5. Add observations (auto-creates entity if missing):
-#memory-test_add_observation workspaceId="my-project" entityName="Alice" observation="Leads the frontend team" entityType="Person"
+dotnet/CentralMemoryMcp.Functions/
+├── Program.cs                  # Host bootstrap
+├── ServiceRegistration.cs      # DI wiring
+├── Functions/
+│   ├── HealthFunctions.cs      # /api/health & /api/ready
+│   ├── GraphFunctions.cs       # Tool endpoints
+├── Services/
+│   ├── KnowledgeGraphService.cs # Domain logic
+├── Storage/
+│   └── TableStorageService.cs   # Azure Table abstraction
+├── Models/                     # DTOs / contracts
+├── appsettings.json            # Local config
+└── host.json                   # Functions host config
 ```
 
-**Key Features for Better LLM Usability:**
-- ✅ Auto-creation of missing entities when adding observations or relations
-- ✅ Helpful error messages with examples when validation fails  
-- ✅ Workflow guidance to view graph first, then search, then create
-- ✅ Clear parameter descriptions with expected formats
-- ✅ Reduced friction - tools handle common edge cases automatically
-
-## 🔧 MCP Tools
-
-**Core Operations:**
-
-- `read_graph` - **RECOMMENDED FIRST STEP**: View the entire knowledge graph to understand existing data
-- `create_entities` - Create entities with auto-update of existing ones
-- `create_relations` - Create relationships with auto-creation of missing entities  
-- `search_entities` / `search_relations` - Search and verify existing data
-- `add_observation` - Add observations with auto-creation of missing entities
-- `update_entity` - Update entity observations and metadata
-- `delete_entity` - Remove entity and all its relations
-- `get_stats` - Get workspace statistics
-- `clear_memory` - Clear all workspace data
-
-**Recommended Workflow:**
-1. Use `read_graph` to understand existing data
-2. Use `search_entities` to check for existing entities
-3. Use `create_entities` to add new entities
-4. Use `create_relations` to connect entities
-5. Use `add_observation` to add new information
-
-**Advanced Features:**
-
-- `get_temporal_events` - Time-based activity tracking
-- `merge_entities` - Merge duplicate entities
-- `detect_duplicate_entities` - Find potential duplicates
-- `execute_batch_operations` - Batch multiple operations
-- `get_user_stats` - Get user-specific statistics
-- `search_relations_by_user` - Find relations by user
-
-## 🏗️ Architecture
-
-Built with:
-
-- **Azure Functions v4** with TypeScript
-- **Azure Table Storage** for persistent data (via Azurite locally)
-- **Model Context Protocol (MCP)** for VS Code integration
-- **Workspace isolation** - each project gets separate storage
-
-## � Project Structure
-
-```text
-src/
-├── functions/         # Azure Functions endpoints
-├── services/          # Business logic (storage, entities, relations)
-├── types/             # TypeScript definitions
-└── index.ts           # Main entry point
+## 🧪 Validation
+```bash
+dotnet build
+func start --port 7071 &
+curl http://localhost:7071/api/health
+curl http://localhost:7071/api/ready
 ```
+
+## 📊 Logging & Telemetry
+- Structured workspace-scoped logging
+- Ready for Application Insights (add connection settings)
+
+## 🪙 Roadmap
+- Vector similarity enrichment
+- Blob archival for large observation history
+- Incremental graph export (JSON / NDJSON)
+- Advanced duplicate resolution heuristics
 
 ## 📚 Documentation
-
-For detailed information, see the `.docs/` folder:
-
-- **[Architecture Guide](.docs/ARCHITECTURE.md)** - Technical design and patterns
-- **[API Reference](.docs/API.md)** - Complete endpoint documentation
-- **[Storage Guide](.docs/STORAGE.md)** - Storage configuration and workspace management
-- **[Deployment Guide](.docs/DEPLOYMENT.md)** - Production deployment options
+See `docs/readme.md` (GitHub Pages index) and other docs in `docs/`:
+- ARCHITECTURE.md
+- API.md
+- STORAGE.md
+- DEPLOYMENT.md
 
 ## 🔒 Production Notes
-
-- Uses Azure Table Storage with managed identity for security
-- Workspace isolation prevents data leakage between projects
-- Health endpoints for monitoring and container orchestration
-- Automatic fallback to local storage for development
+- Prefer managed identity / Key Vault for credentials
+- Enforce workspaceName validation for multi-tenant isolation
+- Monitor health + readiness endpoints
 
 ## 📝 License
-
-MIT License - see LICENSE file for details.
+MIT License - see `LICENSE`.
