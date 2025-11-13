@@ -77,7 +77,7 @@ Use managed identity / Key Vault for secretless access (future enhancement).
 ## Error Handling
 
 - Invalid payloads produce `{ success:false, message }`
-- Missing referenced entity aborts relation upsert
+- Missing referenced entity aborts relation upsert.
 
 ## Limitations / Roadmap
 
