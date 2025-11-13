@@ -27,7 +27,7 @@ dotnet build
 func start --port 7071
 curl http://localhost:7071/api/health
 ```
-Read graph (via MCP tool invocation in client) supplying workspaceName.
+To read the graph, invoke the read_graph MCP tool from the client and supply the workspaceName parameter.
 
 ## Directory Layout
 ```mermaid
