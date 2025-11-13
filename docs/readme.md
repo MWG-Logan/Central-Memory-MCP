@@ -58,10 +58,10 @@ AzureWebJobsStorage=DefaultEndpointsProtocol=https;AccountName=<name>;AccountKey
 
 ## Documentation Set
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) – Design & layering
-- [API.md](./API.md) – MCP tool endpoints
-- [STORAGE.md](./STORAGE.md) – Persistence model
-- [DEPLOYMENT.md](./DEPLOYMENT.md) – Deployment guidance
+- [ARCHITECTURE.md](./ARCHITECTURE.md) â€“ Design & layering
+- [API.md](./API.md) â€“ MCP tool endpoints
+- [STORAGE.md](./STORAGE.md) â€“ Persistence model
+- [DEPLOYMENT.md](./DEPLOYMENT.md) â€“ Deployment guidance
 
 ## License
 

@@ -13,7 +13,7 @@ Alpha implementation exposes four MCP tools plus health endpoints.
 
 ## Common Parameter
 
-- workspaceName (string, required) – partition key for isolation.
+- workspaceName (string, required) â€“ partition key for isolation.
 
 ## Entity Model Response Shape
 
@@ -144,6 +144,7 @@ Errors returned uniformly:
 ```json
 { "success": false, "message": "<reason>" }
 ```
+Common types: ValidationError, NotFoundError, ConflictError, StorageError.
 
 ## Not Implemented (Roadmap)
 

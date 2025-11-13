@@ -1,6 +1,7 @@
 # Architecture Guide (.NET Implementation)
 
 ## Overview
+The Central Memory MCP Server is a serverless Azure Functions (.NET 10 isolated worker) application exposing Model Context Protocol (MCP) memory & knowledge graph operations. It stores entities, relations, observations, and statistics in Azure Table Storage with strong workspace isolation.
 
 Serverless Azure Functions (.NET 10 isolated) implementing a minimal MCP memory graph (alpha). Current scope: entities + relations with basic CRUD and graph read. Workspace isolation via `WorkspaceName` partition key.
 
