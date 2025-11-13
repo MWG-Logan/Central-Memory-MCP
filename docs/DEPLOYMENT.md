@@ -56,7 +56,7 @@ Add workflow to restore, build, publish artifact, deploy with publish profile or
 
 ## Roadmap
 
-- Add CI pipeline
-- Slot-based deployments
-- Infrastructure as code (Bicep)
-- Managed identity for Table Storage (replace connection string)
+- Add CI pipeline.
+- Slot-based deployments.
+- Infrastructure as code (Bicep).
+- Managed identity for Table Storage (replace connection string).
