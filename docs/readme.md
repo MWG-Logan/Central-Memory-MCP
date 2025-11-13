@@ -50,7 +50,7 @@ Edge cases: Missing entities auto-created during relation/observation operations
 
 ## Configuration
 
-Edit `appsettings.json` (local). Set production values via environment/environment variables:
+Edit `appsettings.json` (local). Set production values via environment variables:
 
 ```
 AzureWebJobsStorage=DefaultEndpointsProtocol=https;AccountName=<name>;AccountKey=<key>;EndpointSuffix=core.windows.net
