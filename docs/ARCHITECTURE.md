@@ -18,12 +18,12 @@ flowchart LR
 
 ## Implemented Components
 
-1. GraphFunctions – MCP tool bindings (4 tools implemented).
-2. HealthFunctions – `/api/health`, `/api/ready`.
-3. KnowledgeGraphService – entity upsert, single entity lookup, full workspace read.
-4. RelationService – relation upsert, relations-from-entity lookup, workspace relations list.
-5. TableStorageService – ensures existence of tables and returns clients.
-6. Models – `EntityModel`, `RelationModel`, `WorkspaceModel` (workspace not yet used in tool surface).
+1. GraphFunctions - MCP tool bindings (4 tools implemented).
+2. HealthFunctions - `/api/health`, `/api/ready`.
+3. KnowledgeGraphService - entity upsert, single entity lookup, full workspace read.
+4. RelationService - relation upsert, relations-from-entity lookup, workspace relations list.
+5. TableStorageService - ensures existence of tables and returns clients.
+6. Models - `EntityModel`, `RelationModel`, `WorkspaceModel` (workspace not yet used in tool surface).
 
 ## Data Model
 

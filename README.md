@@ -5,10 +5,10 @@ Model Context Protocol (MCP) compliant memory & knowledge graph server implement
 
 ## Implemented MCP Tools
 Current function set (alpha stage):
-- read_graph – returns all entities for a workspace (relations currently queried separately and joined)
-- upsert_entity – create or update entity (preserves existing Id if name exists)
-- upsert_relation – create or update relation between two entities (requires GUIDs or resolvable names)
-- get_entity_relations – list relations originating from a specific entity
+- read_graph - returns all entities for a workspace (relations currently queried separately and joined)
+- upsert_entity - create or update entity (preserves existing Id if name exists)
+- upsert_relation - create or update relation between two entities (requires GUIDs or resolvable names)
+- get_entity_relations - list relations originating from a specific entity
 - Health & Ready endpoints (/api/health, /api/ready)
 
 Planned (not yet implemented): search_entities, search_relations, stats, temporal, batch operations, merge/detect duplicates.
