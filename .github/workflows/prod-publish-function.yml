@@ -1,0 +1,56 @@
+name: PROD - Deploy DotNet project to Azure Function App
+
+on:
+  push:
+    branches:
+      - main
+
+# CONFIGURATION
+# For help, go to https://github.com/Azure/Actions
+#
+# 1. Set up the following secrets in your repository:
+#   AZURE_FUNCTIONAPP_PUBLISH_PROFILE
+#
+# 2. Change these variables for your configuration:
+env:
+  AZURE_FUNCTIONAPP_NAME: 'memory-mcp'   # set this to your function app name on Azure
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.'       # set this to the path to your function app project, defaults to the repository root
+  DOTNET_VERSION: '10.0.x'                   # set this to the dotnet version to use (e.g. '2.1.x', '3.1.x', '5.0.x')
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for OIDC
+      contents: read # Required for actions/checkout
+    environment: prod
+    steps:
+    - name: 'Checkout GitHub Action'
+      uses: actions/checkout@v5
+
+    - name: Setup DotNet ${{ env.DOTNET_VERSION }} Environment
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: 'Resolve Project Dependencies Using Dotnet'
+      shell: bash
+      run: |
+        pushd './${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}'
+        dotnet build --configuration Release --output ./output
+        popd
+
+    - name: 'Log in to Azure with AZ CLI'
+      uses: azure/login@v2
+      with:
+        client-id: ${{ vars.AZURE_CLIENT_ID }} # Required to log in with OIDC
+        tenant-id: ${{ vars.AZURE_TENANT_ID }} # Required to log in with OIDC
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }} # Required to log in with OIDC
+
+    - name: 'Run Azure Functions Action'
+      uses: Azure/functions-action@v1
+      id: deploy-to-function-app
+      with:
+        app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
+        package: '${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/output'
+# For more samples to get started with GitHub Action workflows to deploy to Azure, refer to https://github.com/Azure/actions-workflow-samples

@@ -1,233 +1,334 @@
-# Central Memory MCP Server
+# Central Memory MCP Server (.NET 10 / Azure Functions)
 
-Model Context Protocol (MCP) memory server built with Azure Functions and TypeScript, providing persistent knowledge graph storage for AI assistants in VS Code.
+Model Context Protocol (MCP) memory server built with Azure Functions (.NET 10, C# 14, isolated worker) providing persistent knowledge graph storage (Entities + Relations) for AI assistants.
 
-**ALWAYS reference these instructions first and fallback to search or bash commands only when you encounter unexpected information that does not match the info here.**
+**ALWAYS reference these instructions first. Only fall back to ad‑hoc search or shell commands if something here is contradicted by current code.**
+
+---
+
+## Technology Stack (Current Rewrite)
+
+- .NET 10 (preview) / C# 14
+- Azure Functions isolated worker model
+- Azure Functions MCP Extension (McpToolTrigger / McpToolProperty / ToolInvocationContext)
+- Azure Table Storage (Entities, Relations, Workspaces tables)
+- Azurite (local emulator) for development
+- Idempotent upsert logic for Entities and Relations (no duplicates by logical key)
+
+---
+
+## Storage Schema (Current)
+
+### Tables
+
+- `entities`: PartitionKey = WorkspaceName, RowKey = Guid (entity Id as N format)
+- `relations`: PartitionKey = WorkspaceName, RowKey = Guid (relation Id as N format)
+- `workspaces`: PartitionKey = `workspaces`, RowKey = workspace name (lowercase)
+
+### Entities
+
+- Unique per (WorkspaceName + Name) – Upsert reuses existing Id.
+- Stored fields: Id, Name, EntityType, Observations ("||" delimited), Metadata.
+
+### Relations
+
+- Unique per (WorkspaceName + FromEntityId + ToEntityId + RelationType) – Upsert reuses existing Id.
+- Stored fields: Id, FromEntityId, ToEntityId, RelationType, Metadata.
+- Upsert accepts either GUIDs (`fromEntityId` / `toEntityId`) or legacy names (`from` / `to`) which are resolved server‑side.
+
+---
+
+## Key Azure Functions (MCP Tools)
+
+Defined in `Functions/GraphFunctions.cs` using MCP attributes:
+
+- `read_graph` – Return all entities + relations for a workspace.
+- `upsert_entity` – Create/update entity (idempotent by name).
+- `upsert_relation` – Create/update relation (idempotent by logical key).
+- `get_entity_relations` – List relations originating from an entity (accepts `entityId` or legacy `entityName`).
+
+Health / readiness endpoints: `HealthFunctions` (`/api/health`, `/api/ready`).
+
+---
 
 ## Working Effectively
 
-### Bootstrap, Build, and Test the Repository
+### 1. Bootstrap (Restore Dependencies)
 
 ```bash
-# Install dependencies - takes ~2 seconds
-npm install
-
-# Build the project - takes ~2 seconds. NEVER CANCEL.
-npm run build
-
-# Install Azure Functions Core Tools v4 (if not already installed)
-npm install -g azure-functions-core-tools@4 --unsafe-perm true
-# NOTE: May fail due to firewall limitations - see Alternative Setup below
+# From solution root
+dotnet restore
 ```
 
-### Start the Development Environment
+(Time: ~2–5 seconds. NEVER CANCEL.)
 
-**Prerequisites:**
-- Node.js 18+ with npm
+### 2. Build
+
+```bash
+dotnet build --no-restore -c Debug
+```
+
+(Time: Usually <10 seconds. NEVER CANCEL.)
+
+Optional:
+
+```bash
+dotnet build -c Release
+```
+
+### 3. Run Locally (Azure Functions Runtime)
+
+Prerequisites:
+
 - Azure Functions Core Tools v4
-- Azurite (for local storage)
+- Azurite (recommend VS Code extension or npm global)
 
-**Setup Steps:**
+Start Azurite (if not already running):
 
-1. **Start Azurite Storage Emulator**
+```bash
+# VS Code extension (preferred) OR command line:
+azurite --location ./azurite --debug
+```
+
+Set required environment variable (PowerShell example):
+
+```powershell
+$env:AzureWebJobsStorage = "UseDevelopmentStorage=true"
+```
+
+Start Functions host (from project directory containing .csproj):
+
+```bash
+func start --port 7071 --verbose
+```
+
+First run may take 30+ seconds. NEVER CANCEL.
+
+### 4. Container Alternative (Firewall / Network Restrictions)
+
+If Functions Core Tools or Azurite cannot be installed:
+
+1. Document limitation: `Azure Functions Core Tools installation fails due to firewall restrictions.`
+2. Use Dockerfile (if provided) pattern:
+
    ```bash
-   # Option 1: Use VS Code extension (recommended)
-   # Install "Azurite" extension and start from command palette
-   
-   # Option 2: Command line (if azurite is installed globally)
-   azurite --location ./azurite --debug
-   # NOTE: May fail due to firewall limitations during installation
+   docker build -t central-memory-mcp-dotnet .   # May take 10+ minutes (do not cancel)
+   docker run -p 7071:7071 central-memory-mcp-dotnet
    ```
 
-2. **Run the Azure Functions Server**
+3. Validate via health endpoints (see Validation section).
+
+---
+
+## MCP Tool Invocation Examples
+
+Use object payloads (properties, not raw JSON strings). Examples:
+
+### Upsert Entity
+
+```jsonc
+{
+  "workspaceName": "DummyTest",
+  "name": "Logan Cook",
+  "entityType": "Person",
+  "observations": ["Example observation"],
+  "metadata": "{\"role\":\"developer\"}"
+}
+```
+
+### Upsert Relation (names only)
+
+```jsonc
+{
+  "workspaceName": "DummyTest",
+  "from": "Logan Cook",
+  "to": "Visual Studio Code",
+  "relationType": "uses"
+}
+```
+
+### Upsert Relation (GUIDs)
+
+```jsonc
+{
+  "workspaceName": "DummyTest",
+  "fromEntityId": "bb3387d342434f28815a57c272d08d28",
+  "toEntityId": "a1ac3089dc4b41d7b2fdf537f219127c",
+  "relationType": "uses",
+  "metadata": "{\"confidence\":0.95}"
+}
+```
+
+### Get Entity Relations
+
+```jsonc
+{ "workspaceName": "DummyTest", "entityName": "Logan Cook" }
+```
+
+OR
+
+```jsonc
+{ "workspaceName": "DummyTest", "entityId": "bb3387d342434f28815a57c272d08d28" }
+```
+
+### Read Graph
+
+```jsonc
+{ "workspaceName": "DummyTest" }
+```
+
+---
+
+## Validation Workflow (MANDATORY After Changes)
+
+1. **Build**
+
    ```bash
-   # Start the server - NEVER CANCEL. Set timeout to 30+ minutes for first run.
-   func start --port 7071 --verbose
-   
-   # Alternative: Use npm script
-   npm start
+   dotnet build
    ```
 
-3. **Configure VS Code**
-   - Install recommended extensions from `.vscode/extensions.json`
-   - The `.vscode/mcp.json` configures the MCP connection
-   - Use `#memory-test` tools in Copilot chat
+2. **Start Host (if available)**
 
-### Alternative Setup (Network Restrictions)
-
-If Azure Functions Core Tools or Azurite installation fails due to network/firewall limitations:
-
-1. **Document the limitation**: "Azure Functions Core Tools installation fails due to firewall limitations"
-2. **Use Docker alternative**: The repository includes a `Dockerfile` for containerized development
    ```bash
-   # Build the container - takes 10+ minutes. NEVER CANCEL. Set timeout to 20+ minutes.
-   docker build -t central-memory-mcp .
-   
-   # Run the container 
-   docker run -p 7071:80 central-memory-mcp
-   ```
-3. **Use health endpoints for validation**: The application provides `/api/health` and `/api/ready` endpoints
-4. **Manual testing approach**: Build the project and examine the `dist/` folder structure
-5. **Focus on build validation**: Ensure `npm run build` succeeds and produces correct output
-
-## Validation
-
-### Manual Validation Steps
-
-**ALWAYS run through these validation scenarios after making changes:**
-
-1. **Build Validation**
-   ```bash
-   npm run build
-   # Verify dist/ folder is created with proper structure
-   ls -la dist/
-   ```
-
-2. **Health Check Validation** (if func is available)
-   ```bash
-   # Start the server (if possible)
    func start --port 7071
-   
-   # Test health endpoint
+   ```
+
+3. **Health Checks**
+
+   ```bash
    curl http://localhost:7071/api/health
-   
-   # Test readiness endpoint  
    curl http://localhost:7071/api/ready
    ```
 
-3. **MCP Tools Testing** (in VS Code with Copilot)
-   ```text
-   # Create an entity
-   #memory-test_create_entities workspaceId="my-project" entities={"name": "Alice", "entityType": "Person", "observations": ["Software engineer"]}
-   
-   # Create a relation
-   #memory-test_create_relations workspaceId="my-project" relations={"from": "Alice", "to": "React Project", "relationType": "worksOn"}
-   
-   # Search entities
-   #memory-test_search_entities workspaceId="my-project" name="Alice"
-   
-   # Read the graph
-   #memory-test_read_graph workspaceId="my-project"
-   ```
+   Expect JSON or text indicating healthy/ready.
 
-4. **File Structure Validation**
-   ```bash
-   # Verify all key components are present
-   ls -la src/functions/    # mcpTools.ts, health.ts, ready.ts
-   ls -la src/services/     # entities.ts, relations.ts, stats.ts, storageService.ts
-   ls -la src/types/        # TypeScript definitions
-   ```
+4. **MCP Tool Smoke Test** (from client / VS Code Copilot Chat)
 
-### CRITICAL Build and Test Timing
+   - Create entity (`upsert_entity`)
+   - Create relation (`upsert_relation`)
+   - Read graph (`read_graph`)
+   - List relations (`get_entity_relations`)
 
-- **npm install**: Takes ~2 seconds. NEVER CANCEL.
-- **npm run build**: Takes ~2 seconds. NEVER CANCEL.
-- **func start**: Takes 30+ seconds for first run. NEVER CANCEL. Set timeout to 30+ minutes.
-- **docker build**: Takes 10+ minutes for first build. NEVER CANCEL. Set timeout to 20+ minutes.
-- **Health endpoints**: Respond within 5 seconds when running.
+5. **Idempotency Checks**
 
-**NEVER CANCEL BUILDS OR LONG-RUNNING COMMANDS** - Azure Functions may take several minutes to start properly.
+   - Upsert same entity name: Id unchanged.
+   - Upsert same relation (workspace + from + to + type): relationId unchanged.
 
-## Common Tasks
+6. **Special Characters / Unicode**
 
-### Repository Structure
+   - Names with spaces, punctuation, Unicode should persist (RowKey uses GUID, eliminating reserved char issues).
+
+---
+
+## Project Structure (.NET)
 
 ```text
-├── .docs/              # Comprehensive documentation
-│   ├── ARCHITECTURE.md # Technical design patterns
-│   ├── API.md         # Complete MCP tools reference  
-│   ├── STORAGE.md     # Storage configuration guide
-│   └── DEPLOYMENT.md  # Production deployment options
-├── .github/           # GitHub configuration
-├── .vscode/           # VS Code integration config
-│   ├── extensions.json # Recommended extensions
-│   └── mcp.json       # MCP server configuration
-├── src/
-│   ├── functions/     # Azure Functions endpoints
-│   │   ├── mcpTools.ts # 16 MCP tools for knowledge graph
-│   │   ├── health.ts   # Health check endpoint
-│   │   └── ready.ts    # Readiness probe
-│   ├── services/      # Business logic
-│   │   ├── entities.ts    # Entity operations
-│   │   ├── relations.ts   # Relationship operations  
-│   │   ├── stats.ts       # Graph statistics and batch ops
-│   │   ├── storageService.ts # Azure Table Storage abstraction
-│   │   ├── logger.ts      # Structured logging
-│   │   └── utils.ts       # Utility functions
-│   ├── types/         # TypeScript definitions
-│   └── index.ts       # Main entry point
-├── dist/              # Compiled JavaScript (after build)
-├── package.json       # Dependencies and scripts
-├── host.json          # Azure Functions configuration
-├── tsconfig.json      # TypeScript configuration
-└── Dockerfile         # Container deployment
+CentralMemoryMcp.Functions/
+  Program.cs                # Host bootstrap + DI registrations
+  local.settings.json       # Local Azure Functions config
+  Functions/
+    GraphFunctions.cs       # MCP tool endpoints
+    HealthFunctions.cs      # /api/health & /api/ready
+  Models/
+    GraphModels.cs          # EntityModel, RelationModel, WorkspaceModel
+  Services/
+    KnowledgeGraphService.cs # Entity logic (idempotent upsert)
+    RelationService.cs        # Relation logic (idempotent upsert)
+    TableStorageService.cs    # Table access abstraction
+  docs/ (architecture, API, storage, deployment)
 ```
 
-### Key Configuration Files
+---
 
-**package.json scripts:**
-- `build` - Compile TypeScript to JavaScript
-- `start` - Start Azure Functions runtime
+## Dependency Injection Summary
 
-**Environment Variables (Development):**
+Registered in `Program.cs`:
+
+- `TableServiceClient` (from AzureWebJobsStorage)
+- `ITableStorageService` → `TableStorageService`
+- `IKnowledgeGraphService` → `KnowledgeGraphService`
+- `IRelationService` → `RelationService`
+
+Ensure `AzureWebJobsStorage` is set before starting the host.
+
+---
+
+## Environment Variables
+
+Development:
+
 ```bash
 AzureWebJobsStorage=UseDevelopmentStorage=true
 ```
 
-**Environment Variables (Production):**
-```bash
-AzureWebJobsStorage=DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=...
-AZURE_STORAGE_ACCOUNT_NAME=mystorageaccount
-```
-
-### Frequently Used Commands
+Production (example):
 
 ```bash
-# Quick development cycle
-npm install && npm run build
-
-# Check application structure  
-find src -name "*.ts" | head -15
-
-# Verify build output
-ls -la dist/functions/
-
-# Check package info
-cat package.json | grep -E "(name|version|scripts)"
+AzureWebJobsStorage=DefaultEndpointsProtocol=https;AccountName=<name>;AccountKey=<key>;EndpointSuffix=core.windows.net
 ```
 
-### Important Code Locations
+---
 
-- **MCP Tools Registration**: `src/functions/mcpTools.ts` - All 16 MCP tools with object parameters
-- **Storage Layer**: `src/services/storageService.ts` - Azure Table Storage with workspace isolation
-- **Entity Operations**: `src/services/entities.ts` - Create, search, update entities
-- **Relation Operations**: `src/services/relations.ts` - Create, search relations  
-- **Health Endpoints**: `src/functions/health.ts` and `src/functions/ready.ts`
+## Performance & Scaling Notes
 
-### Development Notes
+- Partition strategy uses workspace name for both entities and relations (simplifies workspace isolation & scanning).
+- RowKey uses GUID (N format) reducing risk of reserved character collisions and improves distribution.
+- Idempotent upsert reduces table growth from duplicates.
+- For very large workspaces consider eventual introduction of sub‑partitioning (e.g., sharded prefix) if hot partitions emerge.
 
-- **Workspace Isolation**: Each project gets separate storage via workspaceId parameter
-- **MCP Integration**: All tools use object parameters (not JSON strings) for better type safety
-- **Storage**: Uses Azure Table Storage with Azurite for local development
-- **Logging**: Structured logging with correlation IDs throughout the application
-- **Error Handling**: Comprehensive error handling with proper MCP protocol responses
+---
 
-### Troubleshooting
+## Troubleshooting
 
-**Build Issues:**
-- Ensure Node.js 18+ is installed
-- Run `npm install` before `npm run build`
-- Check `tsconfig.json` for TypeScript configuration
+| Issue | Action |
+|-------|--------|
+| Functions host slow start | Wait; do not cancel. First load may JIT assemblies. |
+| Duplicate entities still appear | Confirm you updated by exact name (case sensitive) – names are matched with original casing but stored separately. |
+| Relation duplicates | Verify same GUIDs or names map to same entity IDs and same RelationType casing. |
+| Azurite not available | Document limitation, switch to Docker path. |
+| `AzureWebJobsStorage` missing | Set env var; restart host. |
+| MCP tool missing property error | Provide required tool properties; check `GraphFunctions` attributes for names. |
 
-**Runtime Issues:**
-- Verify Azurite is running for local development
-- Check `host.json` for function timeout settings (currently 5 minutes)
-- Use health endpoints to verify service status
+---
 
-**Network/Firewall Issues:**
-- Azure Functions Core Tools installation may fail - document the limitation: "Azure Functions Core Tools installation fails due to firewall/network limitations"
-- Azurite installation may fail - use Docker alternative or document limitation  
-- Health endpoint testing may not be possible - focus on build validation
-- **WORKAROUND**: If `func start` is not available, validate by examining build output in `dist/` folder and ensuring TypeScript compilation succeeds
+## Contribution Guidelines (Quick)
 
-**Always check handler.ts after making changes to any service files in src/services/.**
+1. Make code change.
+2. `dotnet build` (NEVER CANCEL).
+3. Run local host if possible and validate health + tools.
+4. Update docs if schema / behavior changes (especially this file + `docs/STORAGE.md`, `docs/API.md`).
+5. Keep changes consistent with idempotent semantics.
+
+---
+
+## Quick Command Reference
+
+```bash
+# Restore & build
+dotnet restore && dotnet build
+# Run Functions
+func start --port 7071
+# Health checks
+curl http://localhost:7071/api/health
+curl http://localhost:7071/api/ready
+```
+
+---
+
+## Critical Timing (Updated)
+
+- `dotnet restore`: ~2–5s
+- `dotnet build`: ~5–10s
+- `func start` first run: 30–60s (do NOT cancel)
+
+**NEVER CANCEL BUILDS OR LONG‑RUNNING STARTUPS** – This can corrupt the local Functions host state.
+
+---
+
+## Always Re‑Validate After Schema Changes
+
+Run: build → health → sample MCP tool flows → confirm idempotency → review Table Storage data integrity.
+
+---
+
+**End of Instructions – This file is authoritative for .NET version.**
