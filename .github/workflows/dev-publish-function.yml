@@ -1,6 +1,7 @@
 name: DEV - Deploy DotNet project to Azure Function App
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - dev
