@@ -2,20 +2,13 @@ using CentralMemoryMcp.Functions.Models;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using System.ComponentModel;
-using System; // for Guid
+using CentralMemoryMcp.Functions.Services;
 
 namespace CentralMemoryMcp.Functions.Functions;
 
-public class GraphFunctions
+public class GraphFunctions(IKnowledgeGraphService graph, IRelationService relations)
 {
-    private readonly IKnowledgeGraphService _graph;
-    private readonly IRelationService _relations;
-    
-    public GraphFunctions(IKnowledgeGraphService graph, IRelationService relations)
-    {
-        _graph = graph;
-        _relations = relations;
-    }
+    private readonly IRelationService _relations = relations;
 
     [Function(nameof(ReadGraph))]
     public async Task<object> ReadGraph(
@@ -24,7 +17,7 @@ public class GraphFunctions
         [McpToolProperty("workspaceName", "The unique identifier of the workspace.", isRequired: true)]
         string workspaceName)
     {
-        var entities = await _graph.ReadGraphAsync(workspaceName);
+        var entities = await graph.ReadGraphAsync(workspaceName);
         var relations = await _relations.GetRelationsForWorkspaceAsync(workspaceName);
         
         return new
@@ -55,7 +48,7 @@ public class GraphFunctions
             request.Observations ?? [], 
             request.Metadata);
         
-        model = await _graph.UpsertEntityAsync(model); // capture potentially reused Id
+        model = await graph.UpsertEntityAsync(model); // capture potentially reused Id
         return new { success = true, id = model.Id, workspace = model.WorkspaceName, name = model.Name };
     }
 
@@ -80,12 +73,12 @@ public class GraphFunctions
 
         if (fromId == Guid.Empty && !string.IsNullOrWhiteSpace(request.From))
         {
-            var entity = await _graph.GetEntityAsync(request.WorkspaceName, request.From);
+            var entity = await graph.GetEntityAsync(request.WorkspaceName, request.From);
             if (entity is not null) fromId = entity.Id; else return new { success = false, message = $"Source entity '{request.From}' not found." };
         }
         if (toId == Guid.Empty && !string.IsNullOrWhiteSpace(request.To))
         {
-            var entity = await _graph.GetEntityAsync(request.WorkspaceName, request.To);
+            var entity = await graph.GetEntityAsync(request.WorkspaceName, request.To);
             if (entity is not null) toId = entity.Id; else return new { success = false, message = $"Target entity '{request.To}' not found." };
         }
 
@@ -116,14 +109,14 @@ public class GraphFunctions
         [McpToolProperty("entityName", "Legacy entity name (used if entityId not provided).", isRequired: false)]
         string? entityName)
     {
-        Guid resolvedId = Guid.Empty;
+        Guid resolvedId;
         if (entityId.HasValue && entityId.Value != Guid.Empty)
         {
             resolvedId = entityId.Value;
         }
         else if (!string.IsNullOrWhiteSpace(entityName))
         {
-            var entity = await _graph.GetEntityAsync(workspaceName, entityName);
+            var entity = await graph.GetEntityAsync(workspaceName, entityName);
             if (entity is null)
             {
                 return new { success = false, message = $"Entity '{entityName}' not found in workspace '{workspaceName}'." };
