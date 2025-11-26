@@ -1,7 +1,7 @@
-using Azure;
+using Azure.Identity;
 using Azure.Data.Tables;
 
-namespace CentralMemoryMcp.Functions
+namespace CentralMemoryMcp.Functions.Storage
 {
     public interface ITableStorageService
     {
