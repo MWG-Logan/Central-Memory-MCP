@@ -10,14 +10,6 @@ var builder = FunctionsApplication.CreateBuilder(args);
 // Services
 builder.ConfigureFunctionsWebApplication();
 
-// Register Azure Table Storage
-builder.Services.AddSingleton(sp =>
-{
-    var connectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage") 
-        ?? throw new InvalidOperationException("AzureWebJobsStorage connection string is not configured.");
-    return new TableServiceClient(connectionString);
-});
-
 // Register application services
 builder.Services.AddSingleton<ITableStorageService, TableStorageService>();
 builder.Services.AddSingleton<IKnowledgeGraphService, KnowledgeGraphService>();
