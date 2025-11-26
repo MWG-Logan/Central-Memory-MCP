@@ -4,7 +4,7 @@
     "mcp": {
       "instructions": "This server offers LLMs long-term memory storage capabilities about users, projects, and anything else needed. This should not entirely replace using public information tooling like Microsoft Docs or Context7.",
       "serverName": "Central Memory MCP",
-      "serverVersion": "1.0.0",  
+      "serverVersion": "0.5.1",  
       "system": {
         "webhookAuthorizationLevel": "System"
       }
