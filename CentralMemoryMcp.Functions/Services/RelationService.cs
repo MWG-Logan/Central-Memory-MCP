@@ -20,7 +20,7 @@ public class RelationService(ITableStorageService storage) : IRelationService
     {
         var table = await storage.GetRelationsTableAsync(ct);
         // Check for existing relation (same workspace, from, to, type)
-        string filter = $"PartitionKey eq '{model.WorkspaceName}' and FromEntityId eq '{model.FromEntityId.ToString("N")}' and ToEntityId eq '{model.ToEntityId.ToString("N")}' and RelationType eq '{EscapeFilterValue(model.RelationType)}'";
+        var filter = $"PartitionKey eq '{model.WorkspaceName}' and FromEntityId eq '{model.FromEntityId:N}' and ToEntityId eq '{model.ToEntityId:N}' and RelationType eq '{EscapeFilterValue(model.RelationType)}'";
         await foreach(var e in table.QueryAsync<TableEntity>(filter: filter, maxPerPage:1, cancellationToken: ct))
         {
             // Reuse its Id
@@ -48,17 +48,16 @@ public class RelationService(ITableStorageService storage) : IRelationService
         var table = await storage.GetRelationsTableAsync(ct);
         try
         {
-            var partitionKey = workspaceName;
-            var rowKey = relationId.ToString("N");
-            var response = await table.GetEntityAsync<TableEntity>(partitionKey, rowKey, cancellationToken: ct);
-            var e = response.Value;
+            var response = await table.GetEntityAsync<TableEntity>(workspaceName, relationId.ToString("N"), cancellationToken: ct);
             var model = new RelationModel(
-                e.GetString("WorkspaceName")!,
-                Guid.Parse(e.GetString("FromEntityId")!),
-                Guid.Parse(e.GetString("ToEntityId")!),
-                e.GetString("RelationType")!,
-                e.GetString("Metadata"));
-            model.Id = relationId;
+                response.Value.GetString("WorkspaceName")!,
+                Guid.Parse(response.Value.GetString("FromEntityId")!),
+                Guid.Parse(response.Value.GetString("ToEntityId")!),
+                response.Value.GetString("RelationType")!,
+                response.Value.GetString("Metadata"))
+            {
+                Id = relationId
+            };
             return model;
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -113,11 +112,9 @@ public class RelationService(ITableStorageService storage) : IRelationService
     public async Task DeleteRelationAsync(string workspaceName, Guid relationId, CancellationToken ct = default)
     {
         var table = await storage.GetRelationsTableAsync(ct);
-        var partitionKey = workspaceName;
-        var rowKey = relationId.ToString("N");
         try
         {
-            await table.DeleteEntityAsync(partitionKey, rowKey, cancellationToken: ct);
+            await table.DeleteEntityAsync(workspaceName, relationId.ToString("N"), cancellationToken: ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
