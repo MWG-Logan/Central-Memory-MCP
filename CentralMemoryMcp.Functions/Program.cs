@@ -1,5 +1,6 @@
 using Azure.Data.Tables;
-using CentralMemoryMcp.Functions;
+using CentralMemoryMcp.Functions.Services;
+using CentralMemoryMcp.Functions.Storage;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
